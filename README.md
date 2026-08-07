@@ -13,20 +13,50 @@
 
 ## Запуск
 
+### 1. Клонирование репозитория
+
+```bash
+git clone https://github.com/mrMoish/payment-gateway-service.git
+cd payment-gateway-service
+```
+
+### 2. Запуск сервисов
+
+Запустите `candidate-service` и `provider-simulator` через Docker Compose:
+
 ```bash
 docker compose up --build
 ```
 
-Готовность: `curl localhost:8080/health` → `200`.
-
-Остановка с сохранением данных (том не трогаем):
+Готовность сервиса можно проверить:
 
 ```bash
-docker compose down          # данные остаются в томе payment-gateway_payments-data
-docker compose up            # операции, намерения, providerPaymentId и история на месте
+curl localhost:8080/health
 ```
 
-Полная очистка, включая том:
+Ожидаемый ответ — HTTP `200`.
+
+### 3. Остановка с сохранением данных
+
+Остановить контейнеры без удаления Docker volume:
+
+```bash
+docker compose down
+```
+
+Данные остаются в томе `payment-gateway_payments-data`.
+
+Повторный запуск:
+
+```bash
+docker compose up
+```
+
+Сохранённые операции, намерения отправки, `providerPaymentId` и история событий будут доступны после запуска.
+
+### 4. Полная очистка
+
+Чтобы остановить сервисы и удалить volume вместе со всеми сохранёнными данными:
 
 ```bash
 docker compose down -v
