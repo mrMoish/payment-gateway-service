@@ -1,0 +1,47 @@
+name: payment-gateway
+
+services:
+  candidate-service:
+    build: .
+    # The hostname the simulator most likely uses for its callback default.
+    container_name: candidate-service
+    ports:
+      - "8080:8080"
+    environment:
+      PROVIDER_URL: http://provider-simulator:8081
+      DATABASE_PATH: /data/payments.db
+      LOG_LEVEL: INFO
+      PROVIDER_MAX_ATTEMPTS: "5"
+      PROVIDER_BACKOFF_BASE_SECONDS: "0.2"
+      PROVIDER_BACKOFF_MAX_SECONDS: "5"
+      PROVIDER_BACKOFF_JITTER: "1.0"
+    volumes:
+      # Named volume: operations, submission intents, providerPaymentId and the
+      # event history survive `docker compose down` + `up` untouched.
+      - payments-data:/data
+    depends_on:
+      provider-simulator:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - payments
+
+  provider-simulator:
+    image: ghcr.io/fintech-dev-lab/internship-provider-simulator:v0.2.0
+    container_name: provider-simulator
+    ports:
+      - "8081:8081"
+    environment:
+      # Required by the simulator: where it POSTs receipts. Verified against the
+      # image — it refuses to start without this variable.
+      CALLBACK_URL: http://candidate-service:8080/receipts
+    restart: unless-stopped
+    networks:
+      - payments
+
+volumes:
+  payments-data:
+
+networks:
+  payments:
+    driver: bridge
