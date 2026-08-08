@@ -240,6 +240,14 @@ class Storage:
         self._database_path = database_path
         self._busy_timeout_ms = busy_timeout_ms
         self._local = threading.local()
+        # Every connection this instance opens, so close() can release all of
+        # them and not just the calling thread's. Writers run on the shared
+        # asyncio.to_thread pool, whose threads outlive the instance, so a
+        # thread-local-only close leaks one connection (three fds under WAL)
+        # per pool thread per instance.
+        self._lock = threading.Lock()
+        self._connections: list[sqlite3.Connection] = []
+        self._closed = False
 
     @property
     def database_path(self) -> str:
@@ -249,6 +257,11 @@ class Storage:
 
     @property
     def _conn(self) -> sqlite3.Connection:
+        if self._closed:
+            # close() already shut this handle down on another thread; reusing
+            # it would raise an opaque ProgrammingError deep inside a query.
+            self._local.conn = None
+            raise RuntimeError("Storage is closed")
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
             if self._database_path != ":memory:":
@@ -268,6 +281,11 @@ class Storage:
             conn.execute("PRAGMA synchronous = FULL")
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+            with self._lock:
+                if self._closed:
+                    conn.close()
+                    raise RuntimeError("Storage is closed")
+                self._connections.append(conn)
             self._local.conn = conn
         return conn
 
@@ -292,10 +310,21 @@ class Storage:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def close(self) -> None:
-        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-            self._local.conn = None
+        """Close every connection this instance opened, on any thread.
+
+        Idempotent. Threads other than the caller may still hold a reference in
+        their thread-local slot; ``_closed`` stops them from reusing it.
+        """
+        with self._lock:
+            self._closed = True
+            connections, self._connections = self._connections, []
+        for conn in connections:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                # A connection wedged mid-statement must not strand the rest.
+                pass
+        self._local.conn = None
 
     def health_check(self) -> None:
         self._conn.execute("SELECT 1 FROM operations LIMIT 1").fetchone()
